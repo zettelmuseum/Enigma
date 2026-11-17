@@ -110,43 +110,34 @@ jobs:
           fi
           echo "Contents permission: confirmed (enigma/ listing is readable)."
 
-          # 4. Git transport: reproduce the HTTPS operation needed by checkout.
-          AUTH="$(printf '%s:%s' "$LOGIN" "$SOURCE_TOKEN" | base64 -w 0)"
-          if ! GIT_TERMINAL_PROMPT=0 git -c http.extraheader="AUTHORIZATION: basic $AUTH" \
-            ls-remote --exit-code https://github.com/zettelmuseum/test.git refs/heads/main \
-            > "$BODY" 2> git-auth-error.log; then
-            echo "::error::Git HTTPS authentication failed although the API checks passed."
-            cat git-auth-error.log
-            rm -f git-auth-error.log
+          # 4. Verify authenticated archive download. Git HTTPS is not used:
+          # GitHub's API accepts this credential, while this token's Git transport
+          # endpoint returns "Repository not found". The API archive endpoint is
+          # the supported authenticated read path and redirects to a signed archive.
+          SOURCE_ARCHIVE="$RUNNER_TEMP/enigma-source.tar.gz"
+          ARCHIVE_STATUS="$(curl --silent --show-error --location \
+            --header "Authorization: Bearer $SOURCE_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --output "$SOURCE_ARCHIVE" --write-out '%{http_code}' \
+            "$API/repos/zettelmuseum/test/tarball/main")"
+          echo "Source archive download: HTTP $ARCHIVE_STATUS"
+          if [ "$ARCHIVE_STATUS" != "200" ] || ! tar -tzf "$SOURCE_ARCHIVE" >/dev/null 2>&1; then
+            echo "::error::The token can read the Contents API but cannot download the source archive."
             exit 1
           fi
-          rm -f git-auth-error.log
-          if [ -z "$(cat "$BODY")" ]; then
-            echo "::error::Git could not find refs/heads/main in the source repository."
+          if ! tar -tzf "$SOURCE_ARCHIVE" | grep -q '/enigma/'; then
+            echo "::error::The downloaded source archive does not contain enigma/."
             exit 1
           fi
-          echo "Git HTTPS access: confirmed."
+          echo "Authenticated source archive: confirmed."
           echo "All source-token checks passed."
 
       - name: Import Enigma port into this repository
         shell: bash
-        env:
-          SOURCE_TOKEN: ${{ secrets.ENIGMA_SOURCE_TOKEN }}
         run: |
           set -euo pipefail
-          LOGIN="$(curl --silent --show-error \
-            --header "Authorization: Bearer $SOURCE_TOKEN" \
-            --header "Accept: application/vnd.github+json" \
-            https://api.github.com/user | jq -r '.login // empty')"
-          if [ -z "$LOGIN" ]; then
-            echo "::error::Could not resolve the GitHub account for ENIGMA_SOURCE_TOKEN."
-            exit 1
-          fi
-          AUTH="$(printf '%s:%s' "$LOGIN" "$SOURCE_TOKEN" | base64 -w 0)"
-          GIT_TERMINAL_PROMPT=0 git -c http.extraheader="AUTHORIZATION: basic $AUTH" \
-            clone --depth 1 --filter=blob:none --sparse \
-            https://github.com/zettelmuseum/test.git .port-source
-          git -C .port-source sparse-checkout set enigma .github/workflows
+          mkdir -p .port-source
+          tar -xzf "$RUNNER_TEMP/enigma-source.tar.gz" -C .port-source --strip-components=1
 
       - name: Commit imported Enigma source and standalone workflow
         shell: bash
