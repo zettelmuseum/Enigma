@@ -125,8 +125,12 @@ jobs:
             echo "::error::The token can read the Contents API but cannot download the source archive."
             exit 1
           fi
-          if ! tar -tzf "$SOURCE_ARCHIVE" | grep -q '/enigma/'; then
+          ARCHIVE_LIST="$RUNNER_TEMP/enigma-source-files.txt"
+          tar -tzf "$SOURCE_ARCHIVE" > "$ARCHIVE_LIST"
+          if ! grep -E -q '^[^/]*/enigma/' "$ARCHIVE_LIST"; then
             echo "::error::The downloaded source archive does not contain enigma/."
+            echo "Archive top-level entries:"
+            sed -n '1,30p' "$ARCHIVE_LIST"
             exit 1
           fi
           echo "Authenticated source archive: confirmed."
