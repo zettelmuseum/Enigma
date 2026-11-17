@@ -1,0 +1,6 @@
+*.gmo
+Makefile.in
+POTFILES
+remove-potcdate.sed
+stamp-po
+level_i18n.cc

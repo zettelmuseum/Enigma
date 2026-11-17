@@ -1,0 +1,68 @@
+/*
+ * Copyright (C) 2002,2004 Daniel Heck
+ * Copyright (C) 2006,2007 Ronald Lamprecht
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+ */
+#ifndef ECL_FONT_HH
+#define ECL_FONT_HH
+
+#include <string>
+#include <vector>
+#include <memory>
+
+namespace ecl {
+
+class GC;
+class Surface;
+
+class Font {
+public:
+    virtual ~Font() {}
+
+    virtual int get_lineskip() = 0;
+    virtual int get_height() = 0;
+
+    virtual int get_width(char c) = 0;  // deprecated ! not utf-8 compatible!
+    virtual int get_width(const std::string& text, Font *altFont = nullptr) = 0;
+
+    virtual std::unique_ptr<Surface> render(
+            const std::string& text, Font* altFont = nullptr, int maxWidth = -1) = 0;
+    virtual void render(const GC& gc, int x, int y, const std::string& text,
+            Font* altFont = nullptr, int maxWidth = -1) = 0;
+};
+
+/* Remove white-spaces left and right of the string, and replace all
+   occurences by one or more consecutive white-spaces inside the string
+   by spaces. This has to mirror XSL's normalizeSpaces! */
+std::string normalizeSpaces(const std::string& text);
+
+std::string::size_type breakString(
+        Font* font, const std::string& theString, const std::string& breakChars, int targetWidth);
+
+std::vector<std::string> breakToLines(
+        Font* font, const std::string& theString, const std::string& breakChars, int targetWidth);
+
+/// Load a bitmap font with image 'filename' and font metric
+/// 'descrname'. */
+std::unique_ptr<Font> LoadBitmapFont(const char *filename, const char *descrname);
+
+/// Load a TrueType font from 'filename' at size 'ptsize'.
+std::unique_ptr<Font> LoadTTF(
+        const char* filename, int ptSize, int r = 0xff, int g = 0xff, int b = 0xff);
+
+}  // namespace ecl
+
+#endif

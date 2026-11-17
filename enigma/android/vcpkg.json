@@ -1,0 +1,31 @@
+{
+  "name": "enigma-android",
+  "version-string": "1.3.0",
+  "builtin-baseline": "4df3365fcbb4795a44795883f8719bbb3b3bcd77",
+  "dependencies": [
+    {
+      "name": "sdl2",
+      "default-features": false
+    },
+    {
+      "name": "sdl2-image",
+      "default-features": false,
+      "features": [
+        "libjpeg-turbo"
+      ]
+    },
+    {
+      "name": "sdl2-mixer",
+      "default-features": false
+    },
+    {
+      "name": "sdl2-ttf",
+      "default-features": false
+    },
+    {
+      "name": "xerces-c",
+      "default-features": false
+    },
+    "zlib"
+  ]
+}

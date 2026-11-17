@@ -1,0 +1,69 @@
+/*
+ * Copyright (C) 2008 Ronald Lamprecht
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+ *
+ */
+
+#include "stones/YieldingStone.hh"
+#include "errors.hh"
+//#include "main.hh"
+#include "world.hh"
+
+namespace enigma {
+    YieldingStone::YieldingStone() : yieldedStone (nullptr) {
+    }
+
+    void YieldingStone::dispose() {
+         if (yieldedStone != nullptr) {
+            SendMessage(yieldedStone, "disconnect");
+            DisposeObject(yieldedStone);
+         }
+         yieldedStone = nullptr;
+         yieldedModel.reset();
+         delete this;
+    }
+
+    void YieldingStone::yieldStone(Stone *st) {
+        if (st != nullptr) {
+            ASSERT(yieldedStone == nullptr, XLevelRuntime, "YieldingStone: internal error of double yielding");
+            yieldedStone = st;
+            origin = st->get_pos();
+            yieldedModel = display::YieldModel(GridLoc(GRID_STONES, origin));
+            YieldStone(origin);
+            yieldedStone->setOwnerPos(get_pos());   // the stone id owned at the new position
+        }
+    }
+
+    void YieldingStone::setStone() {
+        GridPos p = get_pos();
+        SendMessage(this, "disconnect");
+        YieldStone(p);
+        if (yieldedStone != nullptr) {
+            int theid = yieldedStone->getId();
+            SetStone(p, yieldedStone);
+            if (Object::getObject(theid) != nullptr) { // not killed?
+                display::SetModel(GridLoc(GRID_STONES, p), std::move(yieldedModel));
+                yieldedStone->on_move(origin);    // continue animations -- this is buggy if the stone has another
+                                            // model on the new position like st-chameleon
+                if (Object::getObject(theid) != nullptr)   // not killed?
+                    SendMessage(yieldedStone, "_model_reanimated");  // temp fix: reset bad models
+            }
+            yieldedStone = nullptr;
+        }
+        DisposeObject(this);
+    }
+
+} // namespace enigma

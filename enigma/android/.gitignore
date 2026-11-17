@@ -1,0 +1,14 @@
+# Local Gradle output
+.gradle/
+**/build/
+local.properties
+
+# vcpkg downloads, installed packages and binary cache
+/vcpkg/
+/.vcpkg-cache/
+/enigma/android/vcpkg_installed/
+
+# Generated Android runtime assets and native binaries
+/enigma/android/app/src/main/assets/enigma-data.zip
+/enigma/android/app/src/main/assets/UPSTREAM-*
+/enigma/android/app/src/main/jniLibs/

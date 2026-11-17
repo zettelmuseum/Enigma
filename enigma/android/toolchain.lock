@@ -1,0 +1,9 @@
+# Fixed Android toolchain and third-party dependency revisions.
+# Enigma itself is vendored in enigma/source and is never fetched or updated.
+VCPKG_REPOSITORY=https://github.com/microsoft/vcpkg.git
+VCPKG_REF=4df3365fcbb4795a44795883f8719bbb3b3bcd77
+SDL_REPOSITORY=https://github.com/libsdl-org/SDL.git
+SDL_REF=release-2.32.10
+ANDROID_NDK_VERSION=29.0.14206865
+ANDROID_COMPILE_SDK=35
+ANDROID_BUILD_TOOLS=35.0.0

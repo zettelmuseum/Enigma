@@ -1,0 +1,4 @@
+add_subdirectory(enigma-core)
+add_subdirectory(lua)
+add_subdirectory(oxydlib)
+add_subdirectory(tinygettext)
