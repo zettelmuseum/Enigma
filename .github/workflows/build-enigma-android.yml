@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "enigma/**"
+      - ".github/workflows/build-enigma-android.yml"
 
 permissions:
   contents: write
