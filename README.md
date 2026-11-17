@@ -12,6 +12,7 @@ Do not go deep into options, it may crash.
 IMPORTANT:
 
 Triple Tap = Use Inventory Item
+
 4x Tap = Rotate Inventory Items
 
 See Actions Workflow, apk in releases.
