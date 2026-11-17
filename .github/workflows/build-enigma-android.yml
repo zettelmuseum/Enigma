@@ -24,18 +24,105 @@ jobs:
     steps:
       - name: Checkout port repository
         uses: actions/checkout@v4
-      # One-time bootstrap: import the complete port from the working repository,
-      # persist it in this repository, then continue with the normal build below.
-      - name: Check access to the private source repository
+      # Validate the credential through both the GitHub API and Git's HTTPS transport.
+      # Never print the token, request headers, or encoded credentials.
+      - name: Verify source token and repository access
+        id: verify-source-token
         shell: bash
         env:
           SOURCE_TOKEN: ${{ secrets.ENIGMA_SOURCE_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${SOURCE_TOKEN}" ]; then
-            echo "::error::Add repository secret ENIGMA_SOURCE_TOKEN with read-only Contents access to zettelmuseum/test."
+
+          if [ -z "${SOURCE_TOKEN:-}" ]; then
+            echo "::error::Secret ENIGMA_SOURCE_TOKEN is missing or empty."
             exit 1
           fi
+
+          API="https://api.github.com"
+          HEADERS="$(mktemp)"
+          BODY="$(mktemp)"
+          trap 'rm -f "$HEADERS" "$BODY"' EXIT
+
+          api_get() {
+            local label="$1"
+            local url="$2"
+            local status
+            : > "$HEADERS"
+            : > "$BODY"
+            status="$(curl --silent --show-error --location \
+              --dump-header "$HEADERS" --output "$BODY" --write-out '%{http_code}' \
+              --header "Authorization: Bearer $SOURCE_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "$url")"
+            echo "$label: HTTP $status"
+            if [ "$status" != "200" ]; then
+              local message
+              message="$(jq -r '.message // "No error message returned"' "$BODY" 2>/dev/null || true)"
+              echo "::error::$label failed (HTTP $status): $message"
+              if [ "$status" = "401" ]; then
+                echo "::error::The token is invalid, expired, or revoked."
+              elif [ "$status" = "403" ]; then
+                echo "::error::GitHub rejected the request. Check token permissions, organization policies, and SSO authorization."
+              elif [ "$status" = "404" ]; then
+                echo "::error::The repository or requested path is not visible to this token. Check repository selection and Contents: Read permission."
+              fi
+              exit 1
+            fi
+          }
+
+          # 1. Authentication: establish which GitHub account owns this token.
+          api_get "Token authentication" "$API/user"
+          LOGIN="$(jq -r '.login // empty' "$BODY")"
+          if [ -z "$LOGIN" ]; then
+            echo "::error::GitHub authenticated the request but returned no account login."
+            exit 1
+          fi
+          echo "Authenticated GitHub account: $LOGIN"
+
+          # 2. Repository visibility and metadata.
+          api_get "Source repository access" "$API/repos/zettelmuseum/test"
+          FULL_NAME="$(jq -r '.full_name // empty' "$BODY")"
+          PRIVATE="$(jq -r '.private // "unknown"' "$BODY")"
+          DEFAULT_BRANCH="$(jq -r '.default_branch // empty' "$BODY")"
+          echo "Repository: $FULL_NAME"
+          echo "Private repository: $PRIVATE"
+          echo "Default branch: $DEFAULT_BRANCH"
+          if [ "$FULL_NAME" != "zettelmuseum/test" ]; then
+            echo "::error::The token resolved to an unexpected repository."
+            exit 1
+          fi
+          if [ "$DEFAULT_BRANCH" != "main" ]; then
+            echo "::error::Expected source branch main, but GitHub reports: $DEFAULT_BRANCH"
+            exit 1
+          fi
+
+          # 3. Contents permission: verify that the exact source directory is readable.
+          api_get "Enigma source directory access" "$API/repos/zettelmuseum/test/contents/enigma?ref=main"
+          if [ "$(jq -r '.type // empty' "$BODY")" != "dir" ]; then
+            echo "::error::The enigma path exists but is not a directory, or its API response was unexpected."
+            exit 1
+          fi
+          echo "Contents permission: confirmed (enigma/ is readable)."
+
+          # 4. Git transport: reproduce the HTTPS operation needed by checkout.
+          AUTH="$(printf 'x-access-token:%s' "$SOURCE_TOKEN" | base64 -w 0)"
+          if ! GIT_TERMINAL_PROMPT=0 git -c http.extraheader="AUTHORIZATION: basic $AUTH" \
+            ls-remote --exit-code https://github.com/zettelmuseum/test.git refs/heads/main \
+            > "$BODY" 2> git-auth-error.log; then
+            echo "::error::Git HTTPS authentication failed although the API checks passed."
+            sed -E 's@(https?://)[^/@ ]+:[^/@ ]+@@\1[REDACTED]@g' git-auth-error.log
+            rm -f git-auth-error.log
+            exit 1
+          fi
+          rm -f git-auth-error.log
+          if [ -z "$(cat "$BODY")" ]; then
+            echo "::error::Git could not find refs/heads/main in the source repository."
+            exit 1
+          fi
+          echo "Git HTTPS access: confirmed."
+          echo "All source-token checks passed."
 
       - name: Import Enigma port into this repository
         uses: actions/checkout@v4
