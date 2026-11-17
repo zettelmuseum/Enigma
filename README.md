@@ -1,3 +1,5 @@
+DISCLAIMER: THIS IS PRE-ALPHA BUT GOOD ENOUGH FOR ME RIGHT NOW
+
 Quick and Dirty port of Enigma puzzle game 
 for Android using current tools and sdk.
 
