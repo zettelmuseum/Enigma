@@ -5,7 +5,6 @@ on:
   push:
     paths:
       - "enigma/**"
-      - ".github/workflows/build-enigma-android.yml"
 
 permissions:
   contents: write
@@ -27,11 +26,24 @@ jobs:
         uses: actions/checkout@v4
       # One-time bootstrap: import the complete port from the working repository,
       # persist it in this repository, then continue with the normal build below.
+      - name: Check access to the private source repository
+        shell: bash
+        env:
+          SOURCE_TOKEN: ${{ secrets.ENIGMA_SOURCE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SOURCE_TOKEN}" ]; then
+            echo "::error::Add repository secret ENIGMA_SOURCE_TOKEN with read-only Contents access to zettelmuseum/test."
+            exit 1
+          fi
+
       - name: Import Enigma port into this repository
         uses: actions/checkout@v4
         with:
           repository: zettelmuseum/test
           ref: main
+          token: ${{ secrets.ENIGMA_SOURCE_TOKEN }}
+          persist-credentials: false
           path: .port-source
           sparse-checkout: |
             enigma
