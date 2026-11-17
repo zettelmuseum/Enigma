@@ -102,11 +102,13 @@ jobs:
 
           # 3. Contents permission: verify that the exact source directory is readable.
           api_get "Enigma source directory access" "$API/repos/zettelmuseum/test/contents/enigma?ref=main"
-          if [ "$(jq -r '.type // empty' "$BODY")" != "dir" ]; then
-            echo "::error::The enigma path exists but is not a directory, or its API response was unexpected."
+          # GitHub returns a JSON array for directory listings (not an object with type=dir).
+          if ! jq -e 'type == "array" and length > 0' "$BODY" >/dev/null; then
+            echo "::error::The enigma directory is readable, but GitHub did not return a non-empty directory listing."
+            jq -r '.message // .' "$BODY" 2>/dev/null | head -c 1000 || true
             exit 1
           fi
-          echo "Contents permission: confirmed (enigma/ is readable)."
+          echo "Contents permission: confirmed (enigma/ listing is readable)."
 
           # 4. Git transport: reproduce the HTTPS operation needed by checkout.
           AUTH="$(printf 'x-access-token:%s' "$SOURCE_TOKEN" | base64 -w 0)"
