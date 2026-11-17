@@ -26,6 +26,7 @@ jobs:
       - name: Checkout port repository
         uses: actions/checkout@v4
       # Validate the credential through both the GitHub API and Git's HTTPS transport.
+      # Triggered validation run after the diagnostic workflow update.
       # Never print the token, request headers, or encoded credentials.
       - name: Verify source token and repository access
         id: verify-source-token
