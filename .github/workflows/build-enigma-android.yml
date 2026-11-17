@@ -143,23 +143,18 @@ jobs:
           mkdir -p .port-source
           tar -xzf "$RUNNER_TEMP/enigma-source.tar.gz" -C .port-source --strip-components=1
 
-      - name: Commit imported Enigma source and standalone workflow
+      - name: Commit imported Enigma source
         shell: bash
         run: |
           set -euo pipefail
           rm -rf enigma
           cp -a .port-source/enigma ./enigma
-          cp .port-source/.github/workflows/build-enigma-android.yml .github/workflows/build-enigma-android.yml
-          sed -i \
-            -e 's/^name: Build Enigma Android ARM64$/name: Enigma Android ARM64/' \
-            -e 's/enigma-android-vendored-/enigma-android-/' \
-            .github/workflows/build-enigma-android.yml
           rm -rf .port-source
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add enigma .github/workflows/build-enigma-android.yml
+          git add enigma
           if ! git diff --cached --quiet; then
-            git commit -m "Import Enigma Android port and standalone build workflow"
+            git commit -m "Import Enigma Android port source"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
 
