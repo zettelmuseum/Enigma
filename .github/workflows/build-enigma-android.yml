@@ -1,0 +1,307 @@
+name: Bootstrap and build Enigma Android ARM64
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "enigma/**"
+      - ".github/workflows/build-enigma-android.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: enigma-android-vendored-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-cache
+      VCPKG_DOWNLOADS: ${{ github.workspace }}/.vcpkg-downloads
+    steps:
+      - name: Checkout port repository
+        uses: actions/checkout@v4
+      # One-time bootstrap: import the complete port from the working repository,
+      # persist it in this repository, then continue with the normal build below.
+      - name: Import Enigma port into this repository
+        uses: actions/checkout@v4
+        with:
+          repository: zettelmuseum/test
+          ref: main
+          path: .port-source
+          sparse-checkout: |
+            enigma
+            .github/workflows
+          sparse-checkout-cone-mode: true
+
+      - name: Commit imported Enigma source and standalone workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf enigma
+          cp -a .port-source/enigma ./enigma
+          cp .port-source/.github/workflows/build-enigma-android.yml .github/workflows/build-enigma-android.yml
+          sed -i \
+            -e 's/^name: Build Enigma Android ARM64$/name: Enigma Android ARM64/' \
+            -e 's/enigma-android-vendored-/enigma-android-/' \
+            .github/workflows/build-enigma-android.yml
+          rm -rf .port-source
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add enigma .github/workflows/build-enigma-android.yml
+          if ! git diff --cached --quiet; then
+            git commit -m "Import Enigma Android port and standalone build workflow"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Cache Android SDK platform, build-tools and NDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/platforms/android-35
+            /usr/local/lib/android/sdk/build-tools/35.0.0
+            /usr/local/lib/android/sdk/ndk/29.0.14206865
+          key: enigma-android-sdk-${{ runner.os }}-api35-buildtools35-ndk29
+
+      - name: Install Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          source enigma/android/toolchain.lock
+          sdkmanager --install "platforms;android-${ANDROID_COMPILE_SDK}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_SDK_ROOT=${SDK_ROOT}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y ninja-build zip unzip
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      # Gradle's setup-gradle action above manages its own dependency cache.
+      # These exact-key caches avoid reusing incompatible native build trees.
+      - name: Restore vcpkg binary packages
+        id: vcpkg-binary-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .vcpkg-cache
+          key: enigma-vcpkg-binary-${{ runner.os }}-arm64-${{ hashFiles('enigma/android/vcpkg.json', 'enigma/android/triplets/arm64-android.cmake') }}
+
+      - name: Cache vcpkg source downloads
+        uses: actions/cache@v4
+        with:
+          path: .vcpkg-downloads
+          key: enigma-vcpkg-downloads-${{ runner.os }}-${{ hashFiles('enigma/android/vcpkg.json') }}
+
+      - name: Restore installed Android dependencies
+        id: vcpkg-installed-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: enigma/android/vcpkg_installed
+          key: enigma-vcpkg-installed-${{ runner.os }}-arm64-${{ hashFiles('enigma/android/vcpkg.json', 'enigma/android/triplets/arm64-android.cmake') }}
+
+      - name: Cache host Lua binding generator
+        uses: actions/cache@v4
+        with:
+          path: build/host-tools
+          key: enigma-host-tools-${{ runner.os }}-${{ hashFiles('enigma/source/**', 'enigma/android/host-tools/**') }}
+
+      - name: Cache native ARM64 CMake build
+        uses: actions/cache@v4
+        with:
+          path: build/android-arm64
+          key: enigma-cmake-arm64-${{ runner.os }}-${{ hashFiles('enigma/source/**', 'enigma/android/cmake/**', 'enigma/android/vcpkg.json', 'enigma/android/triplets/arm64-android.cmake', '.github/workflows/build-enigma-android.yml') }}
+
+      - name: Cache SDL Android Java sources
+        uses: actions/cache@v4
+        with:
+          path: sdl
+          key: enigma-sdl-${{ runner.os }}-release-2.32.10
+
+      - name: Cache vcpkg source and bootstrap
+        uses: actions/cache@v4
+        with:
+          path: vcpkg
+          key: enigma-vcpkg-source-${{ runner.os }}-4df3365fcbb4795a44795883f8719bbb3b3bcd77
+
+      - name: Read pinned dependency and tool revisions
+        id: pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          source enigma/android/toolchain.lock
+          echo "vcpkg_ref=$VCPKG_REF" >> "$GITHUB_OUTPUT"
+          echo "sdl_ref=$SDL_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Verify vendored Enigma source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f enigma/source/CMakeLists.txt
+          test -f enigma/source/SOURCE_REVISION
+          test "$(find enigma/source/data/levels -type f | wc -l)" -eq 1718
+          ! grep -Eq 'add_subdirectory\(music\)' enigma/source/data/CMakeLists.txt
+          ! grep -Eq '#include <curl|CURL\*|curl_easy_|curl_global_|curl_writefunction|InitCurl|ShutdownCurl' enigma/source/src/file.cc enigma/source/src/file.hh enigma/source/src/main.cc
+          grep -Fq 'Internet access is disabled' enigma/source/src/file.cc
+          ! grep -Eq 'enet_|ENetHost|ENetPeer|enet/enet.h|netgame::|NetworkMenu|ShowNetworkMenu' enigma/source/src/client.cc enigma/source/src/client_internal.hh enigma/source/src/server.cc enigma/source/src/gui/MainMenu.cc enigma/source/src/gui/MainMenu.hh
+
+      - name: Fetch SDL Android Java shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d sdl/.git ]; then
+            git clone --depth 1 --branch "${{ steps.pins.outputs.sdl_ref }}" https://github.com/libsdl-org/SDL.git sdl
+          else
+            git -C sdl checkout --detach "${{ steps.pins.outputs.sdl_ref }}"
+          fi
+          mkdir -p enigma/android/app/src/main/java/org/libsdl/app
+          cp -a sdl/android-project/app/src/main/java/org/libsdl/app/. enigma/android/app/src/main/java/org/libsdl/app/
+
+      - name: Build host Lua binding generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S enigma/android/host-tools -B build/host-tools -DUPSTREAM_SOURCE="$GITHUB_WORKSPACE/enigma/source" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/host-tools --target tolua --parallel 2
+          test -x build/host-tools/tolua
+
+      - name: Fetch and build native Android dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          source enigma/android/toolchain.lock
+          if [ ! -d "$VCPKG_ROOT/.git" ]; then
+            git clone --filter=blob:none --no-checkout "$VCPKG_REPOSITORY" "$VCPKG_ROOT"
+          fi
+          git -C "$VCPKG_ROOT" checkout --detach "$VCPKG_REF"
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE" "$VCPKG_DOWNLOADS"
+          if [ ! -x "$VCPKG_ROOT/vcpkg" ]; then
+            "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+          fi
+          export VCPKG_BINARY_SOURCES="clear;files,$VCPKG_DEFAULT_BINARY_CACHE,readwrite"
+          "$VCPKG_ROOT/vcpkg" install \
+            --triplet arm64-android \
+            --overlay-triplets="$GITHUB_WORKSPACE/enigma/android/triplets" \
+            --x-manifest-root="$GITHUB_WORKSPACE/enigma/android"
+
+      # Save dependency caches immediately after vcpkg succeeds. This is
+      # deliberately before Enigma compilation so a later failure/cancellation
+      # cannot discard the expensive native dependency build.
+      - name: Save installed Android dependency cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: enigma/android/vcpkg_installed
+          key: enigma-vcpkg-installed-${{ runner.os }}-arm64-${{ hashFiles('enigma/android/vcpkg.json', 'enigma/android/triplets/arm64-android.cmake') }}
+
+      - name: Save vcpkg binary package cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: .vcpkg-cache
+          key: enigma-vcpkg-binary-${{ runner.os }}-arm64-${{ hashFiles('enigma/android/vcpkg.json', 'enigma/android/triplets/arm64-android.cmake') }}
+
+      - name: Cross-compile Enigma shared library
+        shell: bash
+        run: |
+          set -euo pipefail
+          VCPKG_INSTALLED="$GITHUB_WORKSPACE/enigma/android/vcpkg_installed/arm64-android"
+          cmake -S "$GITHUB_WORKSPACE/enigma/source" -B "$GITHUB_WORKSPACE/build/android-arm64" -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DVCPKG_TARGET_TRIPLET=arm64-android \
+            -DVCPKG_OVERLAY_TRIPLETS="$GITHUB_WORKSPACE/enigma/android/triplets" \
+            -DVCPKG_MANIFEST_DIR="$GITHUB_WORKSPACE/enigma/android" \
+            -DVCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/enigma/android/vcpkg_installed" \
+            -DVCPKG_MANIFEST_INSTALL=OFF \
+            -DCMAKE_SYSTEM_NAME=Android \
+            -DANDROID=ON \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-28 \
+            -DANDROID_STL=c++_shared \
+            -DCMAKE_MODULE_PATH="$GITHUB_WORKSPACE/enigma/android/cmake" \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DHAVE_SDL=ON \
+            -DSDL2_INCLUDE_DIRS="$VCPKG_INSTALLED/include/SDL2" \
+            -DSDL2_LIBRARIES=SDL2::Core \
+            -DTOLUA_EXECUTABLE="$GITHUB_WORKSPACE/build/host-tools/tolua"
+          cmake --build "$GITHUB_WORKSPACE/build/android-arm64" --target enigma --parallel 2
+
+      - name: Package offline data and native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$GITHUB_WORKSPACE/enigma/android/app/src/main"
+          JNI="$APP/jniLibs/arm64-v8a"
+          ASSETS="$APP/assets"
+          VCPKG_INSTALLED="$GITHUB_WORKSPACE/enigma/android/vcpkg_installed/arm64-android"
+          mkdir -p "$JNI" "$ASSETS"
+          (cd "$GITHUB_WORKSPACE/enigma/source/data" && zip -qr "$ASSETS/enigma-data.zip" . -x 'music/*' 'music/**')
+          ! unzip -Z1 "$ASSETS/enigma-data.zip" | grep -q '^music/'
+          level_count="$(unzip -Z1 "$ASSETS/enigma-data.zip" | awk '/^levels\// && !/\/$/ {n++} END {print n+0}')"
+          test "$level_count" -eq 1718
+          cp "$GITHUB_WORKSPACE/enigma/source/COPYING" "$ASSETS/UPSTREAM-COPYING"
+          cp "$GITHUB_WORKSPACE/enigma/source/AUTHORS" "$ASSETS/UPSTREAM-AUTHORS"
+          cp "$GITHUB_WORKSPACE/enigma/source/ACKNOWLEDGEMENTS" "$ASSETS/UPSTREAM-ACKNOWLEDGEMENTS"
+
+          for libdir in "$VCPKG_INSTALLED/lib" "$VCPKG_INSTALLED/bin"; do
+            [ -d "$libdir" ] || continue
+            find "$libdir" -maxdepth 1 \
+              \( -type f -o -type l \) -name '*.so*' -exec cp -a -t "$JNI" {} +
+          done
+          MAIN_SO="$(find "$GITHUB_WORKSPACE/build/android-arm64" -type f -name libmain.so -print -quit)"
+          test -n "$MAIN_SO"
+          cp "$MAIN_SO" "$JNI/libmain.so"
+
+          NDK_LIB="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
+          test -f "$NDK_LIB"
+          cp "$NDK_LIB" "$JNI/libc++_shared.so"
+          test -e "$JNI/libSDL2.so"
+          test -f "$JNI/libmain.so"
+
+      - name: Verify 16 KB ELF and APK alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          LLVM_READelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          for library in enigma/android/app/src/main/jniLibs/arm64-v8a/*.so; do
+            alignments="$("$LLVM_READelf" -lW "$library" | awk '$1 == "LOAD" { print $NF }')"
+            test -n "$alignments"
+            while IFS= read -r alignment; do
+              if (( alignment < 0x4000 )); then
+                echo "16 KB ELF alignment failure: $library has PT_LOAD alignment $alignment"
+                exit 1
+              fi
+            done <<< "$alignments"
+          done
+          gradle --no-daemon --stacktrace -p enigma/android assembleDebug
+          APK="enigma/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          "$ANDROID_SDK_ROOT/build-tools/35.0.0/zipalign" -c -P 16 -v 4 "$APK"
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Enigma-Android-arm64-v8a
+          path: enigma/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
