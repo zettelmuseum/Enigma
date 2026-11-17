@@ -112,7 +112,7 @@ jobs:
             ls-remote --exit-code https://github.com/zettelmuseum/test.git refs/heads/main \
             > "$BODY" 2> git-auth-error.log; then
             echo "::error::Git HTTPS authentication failed although the API checks passed."
-            sed -E 's@(https?://)[^/@ ]+:[^/@ ]+@@\1[REDACTED]@g' git-auth-error.log
+            cat git-auth-error.log
             rm -f git-auth-error.log
             exit 1
           fi
