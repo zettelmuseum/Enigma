@@ -111,7 +111,7 @@ jobs:
           echo "Contents permission: confirmed (enigma/ listing is readable)."
 
           # 4. Git transport: reproduce the HTTPS operation needed by checkout.
-          AUTH="$(printf 'x-access-token:%s' "$SOURCE_TOKEN" | base64 -w 0)"
+          AUTH="$(printf '%s:%s' "$LOGIN" "$SOURCE_TOKEN" | base64 -w 0)"
           if ! GIT_TERMINAL_PROMPT=0 git -c http.extraheader="AUTHORIZATION: basic $AUTH" \
             ls-remote --exit-code https://github.com/zettelmuseum/test.git refs/heads/main \
             > "$BODY" 2> git-auth-error.log; then
@@ -129,17 +129,24 @@ jobs:
           echo "All source-token checks passed."
 
       - name: Import Enigma port into this repository
-        uses: actions/checkout@v4
-        with:
-          repository: zettelmuseum/test
-          ref: main
-          token: ${{ secrets.ENIGMA_SOURCE_TOKEN }}
-          persist-credentials: false
-          path: .port-source
-          sparse-checkout: |
-            enigma
-            .github/workflows
-          sparse-checkout-cone-mode: true
+        shell: bash
+        env:
+          SOURCE_TOKEN: ${{ secrets.ENIGMA_SOURCE_TOKEN }}
+        run: |
+          set -euo pipefail
+          LOGIN="$(curl --silent --show-error \
+            --header "Authorization: Bearer $SOURCE_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            https://api.github.com/user | jq -r '.login // empty')"
+          if [ -z "$LOGIN" ]; then
+            echo "::error::Could not resolve the GitHub account for ENIGMA_SOURCE_TOKEN."
+            exit 1
+          fi
+          AUTH="$(printf '%s:%s' "$LOGIN" "$SOURCE_TOKEN" | base64 -w 0)"
+          GIT_TERMINAL_PROMPT=0 git -c http.extraheader="AUTHORIZATION: basic $AUTH" \
+            clone --depth 1 --filter=blob:none --sparse \
+            https://github.com/zettelmuseum/test.git .port-source
+          git -C .port-source sparse-checkout set enigma .github/workflows
 
       - name: Commit imported Enigma source and standalone workflow
         shell: bash
